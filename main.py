@@ -4,13 +4,12 @@ import random
 from datetime import datetime
 import copy
 
-# قفل برای همگام‌سازی
-# lock = threading.Lock()
-max_users = 20
+
+max_users = 2
 
 account_locks = {}
 
-# تابعی برای بارگذاری داده‌ها از فایل
+# load data from JSON file
 def load_data(filename):
     filename_json = filename + ".json"
     try:
@@ -23,49 +22,34 @@ def load_data(filename):
             json.dump({}, f)
         with open(filename_json, "r") as file:
             return json.load(file)
-        
-# ذخیره داده‌ها در فایل JSON (بدون پاک کردن داده‌های قبلی)
-def save_data(data, filename):
-    # بارگذاری داده‌های موجود از فایل
-    existing_data = load_data(filename)
-    
-    print(f"existing data before change: {existing_data}")
-    # ادغام داده‌های جدید با داده‌های موجود
-    print("\n")
 
-    print(f"this is data[filename]: {data[filename]}")
+# update data in JSON file 
+def save_data(data, filename):
+    existing_data = load_data(filename)
 
     if(existing_data != {}):
         existing_data[filename].update(data[filename])
     else:
         existing_data.update(data)
-    print("\n")
 
-    print(f"existing data after change: {existing_data}")
-
-    
-    # ذخیره داده‌ها در فایل
     with open(filename+".json", 'w') as f:
         json.dump(existing_data, f, indent=4)
 
-
-# کلاس برای ایجاد هر رشته کاربر
 class UserAccount(threading.Thread):
     def __init__(self, username, action, amount=0, target_user=None):
         threading.Thread.__init__(self)
         self.username = username
         self.action = action
         self.amount = amount
-        self.target_user = target_user  # برای انتقال وجه
+        self.target_user = target_user  # for transfer money
         self.data = load_data(filename=username)
 
-        # ایجاد قفل برای هر حساب
+        # lock for each account
         self._ensure_account_lock(self.username)
         if self.target_user:
             self._ensure_account_lock(self.target_user)
 
     def _ensure_account_lock(self, username):
-        """ بررسی و ایجاد قفل برای هر حساب کاربری در صورت لزوم """
         if username not in account_locks:
             account_locks[username] = threading.Lock()
 
@@ -81,18 +65,15 @@ class UserAccount(threading.Thread):
             self.transfer()
 
     def create_account(self):
-        # ایجاد حساب جدید با موجودی اولیه
-        # print(f"This is self.data: {self.data}")
+        """ create account with initial balance """
         if self.username not in self.data:
             self.data[self.username] = {"balance": self.amount, "transactions": []}
             with account_locks[self.username]:
                 save_data(self.data, self.username)
             print(f"Account for {self.username} created with balance {self.amount}")
-        # else:
-        #     print(f"Account for {self.username} already exists.")
 
     def check_balance(self):
-        # show the wallet balance
+        """ show the wallet balance """
         self.data = load_data(self.username)
         account = self.data[self.username]
         if account:
@@ -101,7 +82,6 @@ class UserAccount(threading.Thread):
             print(f"Account for {self.username} does not exist.")
 
     def deposit(self):
-        # واریز وجه
         self.data = load_data(self.username)
         account = self.data[self.username]
         temp = copy.deepcopy(account)
@@ -110,12 +90,12 @@ class UserAccount(threading.Thread):
                 account["balance"] += self.amount
                 account["transactions"].append({"type": "deposit", "amount": self.amount, "status": True, "timestamp": datetime.now().isoformat()})
                 try:
-                    # print(f"This is data for deposit with {self.amount} and {self.username}: {self.data}")
                     save_data(self.data, self.username)
                 except Exception:
                     print(f"[Deposit] for {self.username} failed.")
                     account = temp
                     account["transactions"].append({"type": "deposit", "amount": self.amount, "status": False, "timestamp": datetime.now().isoformat()})
+                    self.data[self.username] = account
                     save_data(self.data, self.username)
                     return 0
             print(f"Deposited {self.amount} to {self.username}'s account.")
@@ -123,7 +103,6 @@ class UserAccount(threading.Thread):
             print(f"Account for {self.username} does not exist.")
 
     def withdraw(self):
-        # برداشت وجه
         self.data = load_data(self.username)
         account = self.data[self.username]
         temp = copy.deepcopy(account)
@@ -138,6 +117,7 @@ class UserAccount(threading.Thread):
                         print(f"[Withdraw] for {self.username} failed.")
                         account = temp
                         account["transactions"].append({"type": "withdraw", "amount": self.amount, "status": False, "timestamp": datetime.now().isoformat()})
+                        self.data[self.username] = account
                         save_data(self.data, self.username)
                         return 0
                     print(f"Withdrew {self.amount} from {self.username}'s account.")
@@ -147,17 +127,27 @@ class UserAccount(threading.Thread):
             print(f"Account for {self.username} does not exist.")
 
     def transfer(self):
-        # انتقال وجه
-        self.data = load_data(self.username)
+        print(f"[SELF USER - TARGET USER] {self.username} - {self.target_user}")
+        try:
+            self.data = load_data(self.username)
+        except Exception:
+            print(f"Could not load data for {self.username}. Run the program again!")
+            return
         account_from = self.data[self.username]
         temp_from = copy.deepcopy(account_from)
-        target_data = load_data(self.target_user) 
+        try:
+            target_data = load_data(self.target_user)
+        except Exception:
+            print(f"Could not load data for {self.target_user}.")
+            return
         account_to = target_data[self.target_user]
         temp_to = copy.deepcopy(account_to)
         if account_from and account_to:
-            lock1, lock2 = self._get_locks(account_from, account_to)
+            lock1, lock2 = self._get_locks()
             with lock1:
+                print("lock1 acquired")
                 with lock2:
+                    print("lock2 acquired")
                     if account_from["balance"] >= self.amount:
                         account_from["balance"] -= self.amount
                         account_to["balance"] += self.amount
@@ -166,11 +156,14 @@ class UserAccount(threading.Thread):
                         try:
                             save_data(self.data, self.username)
                             save_data(target_data, self.target_user)
+                            # raise Exception
                         except Exception:
                             print(f"[Transfer] from {self.username} to {self.target_user} failed.")
                             account_from = temp_from
                             account_to = temp_to
                             account_from["transactions"].append({"type": "transfer", "amount": self.amount, "to": self.target_user, "status": False, "timestamp": datetime.now().isoformat()})
+                            self.data[self.username] = account_from
+                            target_data[self.target_user] = account_to
                             save_data(self.data, self.username)
                             save_data(target_data, self.target_user)
                             return 0
@@ -180,40 +173,42 @@ class UserAccount(threading.Thread):
         else:
             print(f"One or both accounts do not exist.")
 
-    def _get_locks(self, account_from, account_to):
-        """ دریافت قفل‌ها به ترتیب مشخص برای جلوگیری از بن‌بست """
+    def _get_locks(self):
         if self.username < self.target_user:
             return account_locks[self.username], account_locks[self.target_user]
         else:
             return account_locks[self.target_user], account_locks[self.username]
-# تابعی برای ایجاد کاربران تصادفی
+
+# random user choices
 def users_actions():
-    # actions = ["deposit", "withdraw", "transfer", "check_balance"]
-    actions = ["transfer"]
+    actions = ["deposit", "withdraw", "transfer", "check_balance"]
+    # actions = ["transfer"]
 
     users = []
 
-    # ایجاد 20 کاربر به صورت استاتیک
     for i in range(max_users):
         username = f"user{i}"
         action = random.choice(actions)
+        print(f"This is action of user{i}: {action}")
         amount = random.randint(1, 500)
-        target_user = f"user{random.randint(1, 20)}" if action == "transfer" else None
+        random_num = i
+        while random_num == i:
+            random_num = random.randint(0, max_users - 1)
+        target_user = f"user{random_num}" if action == "transfer" else None
+        if(target_user != None):
+            print(f"[TARGET USER] for user{i}: {target_user}")
         
         user_thread = UserAccount(username, action, amount, target_user)
         users.append(user_thread)
     
     return users
 
-# اجرای برنامه
 def run_system():
     users = users_actions()
 
-    # اجرای تمام تردها
     for user in users:
         user.start()
 
-    # منتظر بمانید تا همه تردها تمام شوند
     for user in users:
         user.join()
 
